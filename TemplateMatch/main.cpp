@@ -12,6 +12,10 @@
 #include<iostream>
 #include <iterator>
 
+
+#define Pi 3.14
+
+
 using namespace std;
 using namespace cv;
 using namespace cv::xfeatures2d;
@@ -23,61 +27,45 @@ struct templatePointVector
 	vector<int> templatePointY;
 };
 
-
-//templatePointVector GetTemplate(Mat &image)
-//{
-//	Mat cannyout, dstImage, templateImage;
-//
-//	int thresholeLow = 100; int thresholdUp = 255;
-//	Canny(image, cannyout, thresholeLow, thresholdUp);
-//	namedWindow("Canny", CV_WINDOW_NORMAL);
-//	imshow("Canny", cannyout);
-//
-//	vector<vector<Point>> contours;
-//	//vector<int> templatePointX, templatePointY;
-//
-//	templatePointVector templatePoint;
-//
-//	vector<Vec4i> hierachy;
-//	findContours(cannyout, contours, hierachy, RETR_TREE, CHAIN_APPROX_NONE, Point(0, 0));
-//
-//	dstImage = Mat::zeros(image.size(), CV_8UC1);
-//	for (size_t i = 0; i < contours.size(); i++)
-//	{
-//		double Area = contourArea(contours[i]);
-//		double Length = arcLength(contours[i], true);
-//		if (Area > 60 & Length > 60)
-//		{
-//			drawContours(dstImage, contours, i, Scalar(255), 1, 8, hierachy, 1, Point(0, 0));
-//			for (size_t j = 0; j < contours[i].size(); j++)
-//			{
-//				//double ans = contours[i][j].x;
-//				//cout << 123 << endl;
-//				templatePoint.templatePointX.push_back(contours[i][j].x);
-//				templatePoint.templatePointY.push_back(contours[i][j].y);
-//			}
-//		}
-//	}
-//
-//	namedWindow("【轮廓】", CV_WINDOW_NORMAL);
-//	imshow("【轮廓】", dstImage);
-//
-//	return templatePoint;
-//}
-
-
-templatePointVector GetTemplate(Mat &image)
+struct Contours
 {
+	Mat dstImage;
+	int centerX;
+	int centerY;
+};
+
+struct offsetResult
+{
+	int grayDiff;
+	int resultX;
+	int resultY;
+};
+
+templatePointVector GetTemplate(Contours templateContours,double angle)
+{
+	/*模板点集*/
 	templatePointVector templatePoint;
 
-	for (size_t i = 0; i < image.cols; i++)
+	for (int i = 0; i < templateContours.dstImage.cols; i++)
 	{
-		for (size_t j = 0; j < image.rows; j++)
+		for (int j = 0; j < templateContours.dstImage.rows; j++)
 		{
-			if (image.at<uchar>(j,i)!=0)
+			if (templateContours.dstImage.at<uchar>(j,i)!=0)
 			{
-				templatePoint.templatePointX.push_back(i);
-				templatePoint.templatePointY.push_back(j);
+				//templatePoint.templatePointX.push_back(i);
+				//templatePoint.templatePointY.push_back(j);
+
+				/*旋转*/
+				int cx = i - templateContours.centerX;
+				int cy = j - templateContours.centerY;
+				int rx = (int)cx * cos(angle) - cy * sin(angle) + templateContours.centerX;
+				int ry = (int)cx * sin(angle) + cy * cos(angle) + templateContours.centerY;
+				if (rx > 0 && rx < templateContours.dstImage.cols && ry>0 && ry < templateContours.dstImage.rows)
+				{
+					templatePoint.templatePointX.push_back(rx);
+					templatePoint.templatePointY.push_back(ry);
+				}
+
 			}
 		}
 	}
@@ -86,13 +74,13 @@ templatePointVector GetTemplate(Mat &image)
 }
 
 
-void TemplateMatch(Mat& image, Mat& imageRGB, templatePointVector& templatePoint, Mat& templateImage)
+offsetResult TemplateMatch(Mat& image, Mat& imageRGB, templatePointVector& templatePoint, Mat& templateImage)
 {
 	int pixelStep = 10;
 	int patchStep = 64;
-	double grayDiff = 0;
-	double resultX, resultY;
-	Point result;
+
+	offsetResult result;
+	result.grayDiff = 0;
 
 	vector<int> templatePointX = templatePoint.templatePointX;
 	vector<int> templatePointY = templatePoint.templatePointY;
@@ -102,9 +90,9 @@ void TemplateMatch(Mat& image, Mat& imageRGB, templatePointVector& templatePoint
 	vector<int>::iterator minTemplatePointY = min_element(begin(templatePointY), end(templatePointY));
 	Point minPosition = Point(*minTemplatePointX, *minTemplatePointY);
 
-	for (size_t col = 0; col < image.cols; col += patchStep)
+	for (int col = 0; col < image.cols; col += patchStep)
 	{
-		for (size_t row = 0; row < image.rows; row += patchStep)
+		for (int row = 0; row < image.rows; row += patchStep)
 		{
 			cout << "col\\cols:" << col << "\\" << image.cols << endl;
 
@@ -116,7 +104,7 @@ void TemplateMatch(Mat& image, Mat& imageRGB, templatePointVector& templatePoint
 			//cout << offsetY << endl;
 			/*获取当前点(row,col)与模板结构性信息结合之后的grayDiff*/
 			double temp = 0;
-			for (size_t i = 0; i < templatePointX.size(); i++)
+			for (int i = 0; i < templatePointX.size(); i++)
 			{
 				/*模板图像中点 - 偏差 = 待测图像中对应的点*/
 				Point pt = Point(templatePointX[i] - offsetX, templatePointY[i] - offsetY);
@@ -134,32 +122,33 @@ void TemplateMatch(Mat& image, Mat& imageRGB, templatePointVector& templatePoint
 				}
 			}
 
-			if (temp > grayDiff)
+			if (temp > result.grayDiff)
 			{
-				grayDiff = temp;
-
-				//resultX = offsetX + patchStep;
-				//resultY = offsetY + patchStep;
-				resultX = offsetX ;
-				resultY = offsetY ;
+				//grayDiff = temp;
+				result.grayDiff = temp;
+				result.resultX = offsetX ;
+				result.resultY = offsetY ;
 			}
 		}
 	}
 
-	for (size_t i = 0; i < templatePointX.size(); i++)
-	{
-		double x = templatePointX[i] - resultX;
-		double y = templatePointY[i] - resultY;
-		if (x >= 0 && x <= image.cols - 1 && y >= 0 && y <= image.rows - 1)
-		{
-			imageRGB.at<Vec3b>(y, x)[0] = 0;
-			imageRGB.at<Vec3b>(y, x)[1] = 0;
-			imageRGB.at<Vec3b>(y, x)[2] = 255;
-		}
-	}
+	//for (int i = 0; i < templatePointX.size(); i++)
+	//{
+	//	double x = templatePointX[i] - resultX;
+	//	double y = templatePointY[i] - resultY;
+	//	if (x >= 0 && x <= image.cols - 1 && y >= 0 && y <= image.rows - 1)
+	//	{
+
+	//		imageRGB.at<Vec3b>(y, x)[0] = 0;
+	//		imageRGB.at<Vec3b>(y, x)[1] = 0;
+	//		imageRGB.at<Vec3b>(y, x)[2] = 255;
+	//	}
+	//}
 	
-	namedWindow("【匹配结果】", CV_WINDOW_NORMAL);
-	imshow("【匹配结果】", imageRGB);
+	//namedWindow("【匹配结果】", CV_WINDOW_NORMAL);
+	//imshow("【匹配结果】", imageRGB);
+
+	return result;
 }
 
 
@@ -211,15 +200,19 @@ void PixelGrow(Mat srcImage, Mat& Curve, Mat& srcClone, Point pt, int Thres, int
 }
 
 
-Mat CurveComplete(Mat& srcImage, Mat& srcClone)
+Contours CurveComplete(Mat& srcImage, Mat& srcClone)
 {
+	Contours result;
+
 	int thresholdValue = 50;
 	int thresholdMax = 255;
 	int Thres = 20;
 	int threshExpect = 140;
 	int LowerBind = 0; 
 	int UpperBind = 255;
-	double center = 0.0;
+	int centerX = 0;
+	int centerY = 0;
+	int size = 0;
 
 	Mat cannyOutput;
 	vector<vector<Point>> contours;
@@ -232,54 +225,93 @@ Mat CurveComplete(Mat& srcImage, Mat& srcClone)
 
 	Mat dstImg = Mat::zeros(srcImage.size(), CV_8UC1);
 	//画轮廓
-	for (size_t i = 0; i < contours.size(); i++)
+	for (int i = 0; i < contours.size(); i++)
 	{
 		double area = contourArea(contours[i]);
 		double length = arcLength(contours[i], true);
-		if (area > 50 & length > 50)
+		if (area > 50 && length > 50)
 		{
 			drawContours(dstImg, contours, i, Scalar(255), 1, 8, hierachy, 1, Point(0, 0));
-			for (size_t j = 0; j < contours[i].size(); j++)
+			for (int j = 0; j < contours[i].size(); j++)
 			{
 				srcClone.at<Vec3b>(contours[i][j])[0] = 0;
 				srcClone.at<Vec3b>(contours[i][j])[1] = 0;
 				srcClone.at<Vec3b>(contours[i][j])[2] = 255;
+				centerX += contours[i][j].x;
+				centerY += contours[i][j].y;
+				size++;
 			}
 		}
 	}
+	result.centerX = centerX / size;
+	result.centerY = centerY / size;
+	result.dstImage = dstImg;
+
 	namedWindow("【轮廓图】", CV_WINDOW_NORMAL);
 	imshow("【轮廓图】", dstImg);
 
 	namedWindow("【srcClone】", CV_WINDOW_NORMAL);
 	imshow("【srcClone】", srcClone);
 
-	return dstImg;
+	return result;
 }
 
 
 int main(int argc, char *argv[])
 {
-	Mat maskImage =     imread("E:\\数据集\\彩虹纹图像-0901\\02\\6.bmp", 0);
-	Mat maskImageeRGB = imread("E:\\数据集\\彩虹纹图像-0901\\02\\6.bmp", 1);
-	Mat image =         imread("E:\\数据集\\彩虹纹图像-0901\\01\\6.bmp", 0);
-	Mat imageRGB =      imread("E:\\数据集\\彩虹纹图像-0901\\01\\6.bmp", 1);
+	Mat maskImage =     imread("E:\\数据集\\彩虹纹图像-0901\\02\\1.bmp", 0);
+	Mat maskImageeRGB = imread("E:\\数据集\\彩虹纹图像-0901\\02\\1.bmp", 1);
+	Mat image =         imread("E:\\数据集\\彩虹纹图像-0901\\01\\1.bmp", 0);
+	Mat imageRGB =      imread("E:\\数据集\\彩虹纹图像-0901\\01\\1.bmp", 1);
 
-	Mat templateImage = CurveComplete(maskImage, maskImageeRGB);
+	Contours templateContours = CurveComplete(maskImage, maskImageeRGB);
 	namedWindow("templateImage", CV_WINDOW_NORMAL);
-	imshow("templateImage", templateImage);
+	imshow("templateImage", templateContours.dstImage);
 
 	if (image.empty()|| maskImage.empty())
 	{
 		cout << "could not load image...\n" << endl;
 	}
 
-	templatePointVector templatePoint = GetTemplate(templateImage);
 
-	TemplateMatch(image, imageRGB, templatePoint, templateImage);
+	double angle;
+	templatePointVector templatePoint, bestTemplatePoint;
+	offsetResult curResult, finalResult;
+	finalResult.grayDiff = 0;
+
+	for (angle = -30 * Pi / 180; angle < 30 * Pi / 180; angle += Pi / 180)
+	{
+		templatePoint = GetTemplate(templateContours, -angle);
+
+		offsetResult curResult = TemplateMatch(image, imageRGB, templatePoint, templateContours.dstImage);
+
+		if (curResult.grayDiff > finalResult.grayDiff)
+		{
+			finalResult.grayDiff = curResult.grayDiff;
+			finalResult.resultX = curResult.resultX;
+			finalResult.resultY = curResult.resultY;
+			bestTemplatePoint = templatePoint;
+		}
+	}
+
+	for (int i = 0; i < bestTemplatePoint.templatePointX.size(); i++)
+	{
+		double x = bestTemplatePoint.templatePointX[i] - finalResult.resultX;
+		double y = bestTemplatePoint.templatePointY[i] - finalResult.resultY;
+		if (x >= 0 && x <= image.cols - 1 && y >= 0 && y <= image.rows - 1)
+		{
+
+			imageRGB.at<Vec3b>(y, x)[0] = 0;
+			imageRGB.at<Vec3b>(y, x)[1] = 0;
+			imageRGB.at<Vec3b>(y, x)[2] = 255;
+		}
+	}
+
+	cout << "best angle" << angle << endl;
+
+	namedWindow("【匹配结果】", CV_WINDOW_NORMAL);
+	imshow("【匹配结果】", imageRGB);
 
 	waitKey(0);
 	return 0;
-
 }
-
-
