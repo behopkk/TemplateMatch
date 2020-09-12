@@ -11,6 +11,8 @@
 #include <vector>
 #include<iostream>
 #include <iterator>
+#include <cmath>
+#include <time.h>
 
 
 #define Pi 3.14
@@ -29,19 +31,37 @@ struct templatePointVector
 
 struct Contours
 {
+	/*轮廓图*/
 	Mat dstImage;
+
+	/*质心坐标*/
 	int centerX;
 	int centerY;
 };
 
 struct offsetResult
 {
+	/*灰度差异信息*/
 	int grayDiff;
+
+	/*模板平移量*/
 	int resultX;
 	int resultY;
 };
 
-templatePointVector GetTemplate(Contours templateContours,double angle)
+
+/*最佳仿射变换参数*/
+struct bestAffineParm
+{
+	double angle;//旋转角度
+	int transX;//X 方向平移量
+	int transY;//Y 方向平移量
+	double scalarX;//X 方向尺度变换
+	double scalarY;//Y 方向尺度变换
+};
+
+
+templatePointVector GetTemplatePoint(Contours templateContours,double angle)
 {
 	/*模板点集*/
 	templatePointVector templatePoint;
@@ -52,9 +72,6 @@ templatePointVector GetTemplate(Contours templateContours,double angle)
 		{
 			if (templateContours.dstImage.at<uchar>(j,i)!=0)
 			{
-				//templatePoint.templatePointX.push_back(i);
-				//templatePoint.templatePointY.push_back(j);
-
 				/*旋转*/
 				int cx = i - templateContours.centerX;
 				int cy = j - templateContours.centerY;
@@ -74,142 +91,90 @@ templatePointVector GetTemplate(Contours templateContours,double angle)
 }
 
 
-offsetResult TemplateMatch(Mat& image, Mat& imageRGB, templatePointVector& templatePoint, Mat& templateImage)
+offsetResult TemplateMatch(Mat& image, templatePointVector& templatePoint, Mat& templateImage,int zoomScale)
 {
-	int pixelStep = 10;
-	int patchStep = 64;
+	int pixelStep = 10/zoomScale;
+	int patchStep = 64/zoomScale;
+	int minX;
+	int minY;
+	int offsetX;//模板左上角点坐标相对于当前搜索点的X方向平移量
+	int offsetY;//模板左上角点坐标相对于当前搜索点的Y方向平移量
+	double temp;
 
 	offsetResult result;
 	result.grayDiff = 0;
+	Point pt;
 
-	vector<int> templatePointX = templatePoint.templatePointX;
-	vector<int> templatePointY = templatePoint.templatePointY;
+	double curPointValue;
+	double curPointValue_UR1;
+	double curPointValue_UR2;
+	double curPointValue_UL1;
+	double curPointValue_UL2;
+	double curPointValue_DR1;
+	double curPointValue_DR2;
+	double curPointValue_DL1;
+	double curPointValue_DL2;
 
 	/*寻找模板图像轮廓的凸包矩形的左上角点*/
-	vector<int>::iterator minTemplatePointX = min_element(begin(templatePointX), end(templatePointX));
-	vector<int>::iterator minTemplatePointY = min_element(begin(templatePointY), end(templatePointY));
+	vector<int>::iterator minTemplatePointX = min_element(begin(templatePoint.templatePointX), end(templatePoint.templatePointX));
+	vector<int>::iterator minTemplatePointY = min_element(begin(templatePoint.templatePointY), end(templatePoint.templatePointY));
 	Point minPosition = Point(*minTemplatePointX, *minTemplatePointY);
 
 	for (int col = 0; col < image.cols; col += patchStep)
 	{
 		for (int row = 0; row < image.rows; row += patchStep)
 		{
-			cout << "col\\cols:" << col << "\\" << image.cols << endl;
+			//cout << "col\\cols:" << col << "\\" << image.cols <<","<< "row\\rows:" << row << "\\" << image.rows << endl;
 
 			/*计算当前点与模板的结构性偏差*/
-			int minX = minPosition.x;
-			int minY = minPosition.y;
-			int offsetX = col - minX;
-			int offsetY = row - minY;
+			minX = minPosition.x;
+			minY = minPosition.y;
+			offsetX = col - minX;
+			offsetY = row - minY;
 			//cout << offsetY << endl;
 			/*获取当前点(row,col)与模板结构性信息结合之后的grayDiff*/
-			double temp = 0;
-			for (int i = 0; i < templatePointX.size(); i++)
+			temp = 0;
+			for (int i = 0; i < templatePoint.templatePointX.size(); i++)
 			{
 				/*模板图像中点 - 偏差 = 待测图像中对应的点*/
-				Point pt = Point(templatePointX[i] - offsetX, templatePointY[i] - offsetY);
+				pt = Point(templatePoint.templatePointX[i] - offsetX, templatePoint.templatePointY[i] - offsetY);
 
 				/*计算当前待测点的邻域内灰度差信息*/
 				if (pt.x >= 0 && pt.x < image.cols  && pt.y >= 2 * pixelStep && pt.y < image.rows - 2 * pixelStep)
 				{
-					double curPointValue = image.at<uchar>(pt.y, pt.x);
-					double curPointValue_U1 = image.at<uchar>(pt.y, pt.x - 1 * pixelStep);
-					double curPointValue_U2 = image.at<uchar>(pt.y, pt.x - 2 * pixelStep);
-					double curPointValue_D1 = image.at<uchar>(pt.y, pt.x + 1 * pixelStep);
-					double curPointValue_D2 = image.at<uchar>(pt.y, pt.x + 2 * pixelStep);
+					curPointValue = image.at<uchar>(pt.y, pt.x);
 
-					temp += abs(4 * curPointValue - curPointValue_U1 - curPointValue_U2 - curPointValue_D1 - curPointValue_D2);
+					curPointValue_UR1 = image.at<uchar>(pt.y - 1 * pixelStep, pt.x + 1 * pixelStep);
+					curPointValue_UR2 = image.at<uchar>(pt.y - 2 * pixelStep, pt.x + 2 * pixelStep);
+					curPointValue_UL1 = image.at<uchar>(pt.y - 1 * pixelStep, pt.x - 1 * pixelStep);
+					curPointValue_UL2 = image.at<uchar>(pt.y - 2 * pixelStep, pt.x - 2 * pixelStep);
+
+					curPointValue_DR1 = image.at<uchar>(pt.y + 1 * pixelStep, pt.x + 1 * pixelStep);
+					curPointValue_DR2 = image.at<uchar>(pt.y + 2 * pixelStep, pt.x + 2 * pixelStep);
+					curPointValue_DL1 = image.at<uchar>(pt.y + 1 * pixelStep, pt.x - 1 * pixelStep);
+					curPointValue_DL2 = image.at<uchar>(pt.y + 2 * pixelStep, pt.x - 2 * pixelStep);
+
+					temp += abs(8 * curPointValue - curPointValue_DL1 - curPointValue_DL2 - curPointValue_DR1
+						- curPointValue_DR2 - curPointValue_UL1 - curPointValue_UL2 - curPointValue_UR1 - curPointValue_UR2);
 				}
 			}
 
 			if (temp > result.grayDiff)
 			{
-				//grayDiff = temp;
 				result.grayDiff = temp;
-				result.resultX = offsetX ;
+				result.resultX = offsetX ;//
 				result.resultY = offsetY ;
 			}
 		}
 	}
-
-	//for (int i = 0; i < templatePointX.size(); i++)
-	//{
-	//	double x = templatePointX[i] - resultX;
-	//	double y = templatePointY[i] - resultY;
-	//	if (x >= 0 && x <= image.cols - 1 && y >= 0 && y <= image.rows - 1)
-	//	{
-
-	//		imageRGB.at<Vec3b>(y, x)[0] = 0;
-	//		imageRGB.at<Vec3b>(y, x)[1] = 0;
-	//		imageRGB.at<Vec3b>(y, x)[2] = 255;
-	//	}
-	//}
-	
-	//namedWindow("【匹配结果】", CV_WINDOW_NORMAL);
-	//imshow("【匹配结果】", imageRGB);
-
 	return result;
 }
 
 
-void PixelGrow(Mat srcImage, Mat& Curve, Mat& srcClone, Point pt, int Thres, int threshExpect, int LowerBind, int UpperBind)
-{
-	Point pToGrowing;								    //待生长点位置
-	int pGrowValue = 0;                                 //待生长点灰度值
-	double pSrcValue = 0;                               //生长起点灰度值
-	double pCurValue = 0;                               //当前生长点灰度值
-
-	//生长方向顺序数据
-	int DIR[8][2] = { {-1,-1}, {0,-1}, {1,-1}, {1,0}, {1,1}, {0,1}, {-1,1}, {-1,0} };
-	vector<Point> growPtVector;							//生长点栈
-	growPtVector.push_back(pt);                         //将生长点压入栈中
-
-	pSrcValue = srcImage.at<uchar>(pt.y, pt.x);         //记录生长点的灰度值
-
-	while (!growPtVector.empty())                       //生长栈不为空则生长
-	{
-		pt = growPtVector.back();                       //取出一个生长点
-		growPtVector.pop_back();
-
-		//分别对八个方向上的点进行生长
-		for (int i = 0; i < 8; ++i)
-		{
-			pToGrowing.x = pt.x + DIR[i][0];
-			pToGrowing.y = pt.y + DIR[i][1];
-			//检查是否是边缘点
-			if (pToGrowing.x < 0 || pToGrowing.y < 0 || pToGrowing.x >(srcImage.cols - 1) || (pToGrowing.y > srcImage.rows - 1))
-				continue;
-			if (Curve.at<uchar>(pToGrowing.y, pToGrowing.x) != 0)continue;
-
-			pSrcValue = srcImage.at<uchar>(pt.y, pt.x);
-			if (pGrowValue == 0)//如果标记点还没有被生长
-			{
-				pCurValue = srcImage.at<uchar>(pToGrowing.y, pToGrowing.x);
-				if (pCurValue <= UpperBind && pCurValue >= LowerBind)
-				{
-					if (((abs(pCurValue - pSrcValue) < Thres) || (pCurValue > threshExpect)) && (pCurValue > threshExpect) && (pSrcValue > threshExpect)) //在阈值范围内则生长
-					{
-						srcClone.at<Vec3b>(pToGrowing.y, pToGrowing.x) = Vec3b(0, 0, 255);
-						Curve.at<uchar>(pToGrowing.y, pToGrowing.x) = 255;//标记为白色
-						growPtVector.push_back(pToGrowing);//将下一个生长点压入栈中
-					}
-				}
-			}
-		}
-	}
-}
-
-
-Contours CurveComplete(Mat& srcImage, Mat& srcClone)
+Contours CurveComplete(Mat& srcImage ,int zoomScale)
 {
 	Contours result;
 
-	int thresholdValue = 50;
-	int thresholdMax = 255;
-	int Thres = 20;
-	int threshExpect = 140;
-	int LowerBind = 0; 
-	int UpperBind = 255;
 	int centerX = 0;
 	int centerY = 0;
 	int size = 0;
@@ -218,8 +183,6 @@ Contours CurveComplete(Mat& srcImage, Mat& srcClone)
 	vector<vector<Point>> contours;
 	vector<Vec4i> hierachy;
 	Canny(srcImage, cannyOutput, 150, 255, 3, false);
-	namedWindow("Canny output", CV_WINDOW_NORMAL);
-	imshow("Canny output", cannyOutput);
 
 	findContours(cannyOutput, contours, hierachy, RETR_TREE, CHAIN_APPROX_NONE, Point(0, 0));
 
@@ -229,14 +192,11 @@ Contours CurveComplete(Mat& srcImage, Mat& srcClone)
 	{
 		double area = contourArea(contours[i]);
 		double length = arcLength(contours[i], true);
-		if (area > 50 && length > 50)
+		if (area > 50/ pow(zoomScale,2) && length > 50/ zoomScale)
 		{
 			drawContours(dstImg, contours, i, Scalar(255), 1, 8, hierachy, 1, Point(0, 0));
 			for (int j = 0; j < contours[i].size(); j++)
 			{
-				srcClone.at<Vec3b>(contours[i][j])[0] = 0;
-				srcClone.at<Vec3b>(contours[i][j])[1] = 0;
-				srcClone.at<Vec3b>(contours[i][j])[2] = 255;
 				centerX += contours[i][j].x;
 				centerY += contours[i][j].y;
 				size++;
@@ -247,57 +207,53 @@ Contours CurveComplete(Mat& srcImage, Mat& srcClone)
 	result.centerY = centerY / size;
 	result.dstImage = dstImg;
 
-	namedWindow("【轮廓图】", CV_WINDOW_NORMAL);
-	imshow("【轮廓图】", dstImg);
-
-	namedWindow("【srcClone】", CV_WINDOW_NORMAL);
-	imshow("【srcClone】", srcClone);
-
 	return result;
 }
 
 
-int main(int argc, char *argv[])
+void TemplateLocate(Mat& maskImage,Mat& maskImageeRGB,Mat& image,Mat& imageRGB)
 {
-	Mat maskImage =     imread("E:\\数据集\\彩虹纹图像-0901\\02\\1.bmp", 0);
-	Mat maskImageeRGB = imread("E:\\数据集\\彩虹纹图像-0901\\02\\1.bmp", 1);
-	Mat image =         imread("E:\\数据集\\彩虹纹图像-0901\\01\\1.bmp", 0);
-	Mat imageRGB =      imread("E:\\数据集\\彩虹纹图像-0901\\01\\1.bmp", 1);
+	Contours templateContours = CurveComplete(maskImage,1);
+	//namedWindow("templateImage", CV_WINDOW_NORMAL);
+	//imshow("templateImage", templateContours.dstImage);
 
-	Contours templateContours = CurveComplete(maskImage, maskImageeRGB);
-	namedWindow("templateImage", CV_WINDOW_NORMAL);
-	imshow("templateImage", templateContours.dstImage);
-
-	if (image.empty()|| maskImage.empty())
-	{
-		cout << "could not load image...\n" << endl;
-	}
-
-
-	double angle;
 	templatePointVector templatePoint, bestTemplatePoint;
-	offsetResult curResult, finalResult;
-	finalResult.grayDiff = 0;
+	double finalResultGrayDiff = 0;
+	bestAffineParm bestAffine;
 
-	for (angle = -30 * Pi / 180; angle < 30 * Pi / 180; angle += Pi / 180)
+	for (double angle = -10 * Pi / 180; angle < 10 * Pi / 180; angle += Pi / 180)
 	{
-		templatePoint = GetTemplate(templateContours, -angle);
+		cout << "angle = " << angle * 180 / Pi << "°" << endl;
 
-		offsetResult curResult = TemplateMatch(image, imageRGB, templatePoint, templateContours.dstImage);
+		clock_t t1 = clock();
+		templatePoint = GetTemplatePoint(templateContours, -angle);
 
-		if (curResult.grayDiff > finalResult.grayDiff)
+		offsetResult curResult = TemplateMatch(image,templatePoint, templateContours.dstImage,1);
+
+		if (curResult.grayDiff > finalResultGrayDiff)
 		{
-			finalResult.grayDiff = curResult.grayDiff;
-			finalResult.resultX = curResult.resultX;
-			finalResult.resultY = curResult.resultY;
+			finalResultGrayDiff = curResult.grayDiff;
 			bestTemplatePoint = templatePoint;
+
+			/*Get the best rotate angle*/
+			bestAffine.angle = angle;
+
+			/*Get the best translation in X direction*/
+			bestAffine.transX = curResult.resultX;
+
+			/*Get the best translation in Y direction*/
+			bestAffine.transY = curResult.resultY;
 		}
+
+		clock_t t2 = clock();
+		cout << "time is : " << (t2 - t1) * 1.0 / CLOCKS_PER_SEC << "s" << endl;
 	}
 
+	double x, y;
 	for (int i = 0; i < bestTemplatePoint.templatePointX.size(); i++)
 	{
-		double x = bestTemplatePoint.templatePointX[i] - finalResult.resultX;
-		double y = bestTemplatePoint.templatePointY[i] - finalResult.resultY;
+		x = bestTemplatePoint.templatePointX[i] - bestAffine.transX;
+		y = bestTemplatePoint.templatePointY[i] - bestAffine.transY;
 		if (x >= 0 && x <= image.cols - 1 && y >= 0 && y <= image.rows - 1)
 		{
 
@@ -307,10 +263,135 @@ int main(int argc, char *argv[])
 		}
 	}
 
-	cout << "best angle" << angle << endl;
+	cout << "best angle is : " << bestAffine.angle * 180 / Pi << endl;
+	cout << "best transX is : " << bestAffine.transX << endl;
+	cout << "best transY is : " << bestAffine.transY / Pi << endl;
+	
+	namedWindow("【匹配结果】", CV_WINDOW_NORMAL);
+	imshow("【匹配结果】", imageRGB);
+}
+
+
+
+/*多尺度金字塔模板匹配*/
+void PyramidTemplateLocate(Mat maskImage, Mat& maskImageeRGB, Mat image, Mat& imageRGB)
+{
+	Mat maskImage_DS, image_DS;
+
+	templatePointVector afterZoomPoint, templatePoint, bestTemplatePoint;
+	bestAffineParm bestAffine;
+	offsetResult tempResult, curResult;
+
+	int zoomScale = 1;
+	int col = maskImage.cols;
+	int row = maskImage.rows;
+	double finalResultGrayDiff = 0;
+	double afterZoomGrayDiff;
+
+	for (double angle = -10 * Pi / 180; angle < 10 * Pi / 180; angle += Pi / 180)
+	{
+		cout << "angle = " << angle * 180 / Pi << "°" << endl;
+
+		afterZoomGrayDiff = 0;
+
+		/*三次下采样*/
+		clock_t t1 = clock();
+		maskImage_DS = maskImage.clone();
+		image_DS = image.clone();
+		for (size_t i = 0; i < 3; i++)
+		{
+			zoomScale *= 2;//2,4,8
+
+			pyrDown(maskImage_DS, maskImage_DS, Size(maskImage_DS.cols / 2, maskImage_DS.rows / 2));
+			pyrDown(image_DS, image_DS, Size(image_DS.cols / 2, image_DS.rows / 2));
+
+			/*下采样之后的图像进行模板匹配*/
+			// 计算当前的模板图像
+			Contours templateContours = CurveComplete(maskImage_DS, zoomScale);
+
+			afterZoomPoint = GetTemplatePoint(templateContours, -angle);
+
+			/*计算当前模板下的灰度差信息和模板平移量*/
+			tempResult = TemplateMatch(image_DS, afterZoomPoint, templateContours.dstImage, zoomScale);
+
+			curResult.resultX += tempResult.resultX * zoomScale;
+			curResult.resultY += tempResult.resultY * zoomScale;
+
+			afterZoomGrayDiff += tempResult.grayDiff;
+		}
+
+		zoomScale = 1;
+
+		/*计算最佳旋转角度和平移量*/
+		//这里的最佳参数计算都是在原图1/2大小的图像上计算的
+		if (afterZoomGrayDiff > finalResultGrayDiff)
+		{
+			finalResultGrayDiff = afterZoomGrayDiff;
+
+			/*最佳模板点集*/
+			bestTemplatePoint = templatePoint;
+
+			/*Get the best rotate angle*/
+			bestAffine.angle = angle;
+
+			/*Get the best translation in X direction*/
+			bestAffine.transX = curResult.resultX / 3;
+
+			/*Get the best translation in Y direction*/
+			bestAffine.transY = curResult.resultY / 3;
+		}
+
+		clock_t t2 = clock();
+		cout << "time is : " << (t2 - t1) * 1.0 / CLOCKS_PER_SEC << "s" << endl;
+	}
+
+	double x, y;
+	for (int i = 0; i < bestTemplatePoint.templatePointX.size(); i++)
+	{
+		x = bestTemplatePoint.templatePointX[i] - bestAffine.transX;
+		y = bestTemplatePoint.templatePointY[i] - bestAffine.transY;
+		if (x >= 0 && x <= image.cols - 1 && y >= 0 && y <= image.rows - 1)
+		{
+
+			imageRGB.at<Vec3b>(y, x)[0] = 0;
+			imageRGB.at<Vec3b>(y, x)[1] = 0;
+			imageRGB.at<Vec3b>(y, x)[2] = 255;
+		}
+	}
+
+	cout << "best angle is : " << bestAffine.angle * 180 / Pi << endl;
+	cout << "best transX is : " << bestAffine.transX << endl;
+	cout << "best transY is : " << bestAffine.transY << endl;
 
 	namedWindow("【匹配结果】", CV_WINDOW_NORMAL);
 	imshow("【匹配结果】", imageRGB);
+}
+
+int main(int argc, char *argv[])
+{
+	int index = 1;
+	char maskImagePath[100], maskImageeRgbPath[100], imagePath[100], imageRgbPath[100];
+
+	sprintf_s(maskImagePath, "E:\\数据集\\彩虹纹图像-0901\\02\\%d.bmp", index);
+	sprintf_s(maskImageeRgbPath, "E:\\数据集\\彩虹纹图像-0901\\02\\%d.bmp", index);
+	sprintf_s(imagePath, "E:\\数据集\\彩虹纹图像-0901\\01\\%d.bmp", index);
+	sprintf_s(imageRgbPath, "E:\\数据集\\彩虹纹图像-0901\\01\\%d.bmp", index);
+
+	Mat maskImage = imread(maskImagePath, 0);
+	Mat maskImageeRGB = imread(maskImageeRgbPath, 1);
+	Mat image = imread(imagePath, 0);
+	Mat imageRGB = imread(imageRgbPath, 1);
+
+	//Mat test;
+	//pyrDown(maskImage, maskImage, Size(maskImage.cols / 2, maskImage.rows / 2));
+
+	if (image.empty() || maskImage.empty())
+	{
+		cout << "could not load image...\n" << endl;
+	}
+
+	//TemplateLocate(maskImage, maskImageeRGB, image, imageRGB);
+	PyramidTemplateLocate(maskImage, maskImageeRGB, image, imageRGB);
 
 	waitKey(0);
 	return 0;
